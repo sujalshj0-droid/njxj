@@ -18,20 +18,36 @@ def log(msg):
     if len(state["logs"]) > 500:
         state["logs"] = state["logs"][-500:]
 
+def save_session(cl):
+    try:
+        cl.dump_settings("session.json")
+        log("💾 Session saved")
+    except:
+        pass
+
 def spam_bot():
     cl = Client()
     cl.delay_range = [6, 18]
 
+    # Auto load session
+    if os.path.exists("session.json"):
+        try:
+            cl.load_settings("session.json")
+            log("🔄 Loaded saved session.json")
+        except:
+            pass
+
     try:
         cl.login_by_sessionid(cfg["sessionid"])
         log("✅ LOGIN SUCCESS")
+        save_session(cl)
     except Exception as e:
         log(f"❌ LOGIN FAILED → {str(e)[:80]}")
         return
 
+    batch_counter = 0
     while state["running"]:
         try:
-            # Thread ID daala hai to sirf usi GC mein spam, warna sab GC mein rotate
             if cfg["thread_id"]:
                 groups = [type('obj', (object,), {'id': int(cfg["thread_id"]), 'thread_title': 'Specific GC'})()]
                 log("🎯 Specific Thread ID mode")
@@ -62,11 +78,22 @@ def spam_bot():
 
                 time.sleep(cfg["group_delay"] + random.uniform(0.8, 2.2))
 
+                batch_counter += 1
+                if batch_counter >= 10:
+                    break_time = random.randint(12, 18)
+                    log(f"⏳ Smart break after 10 GCs → {break_time} seconds")
+                    time.sleep(break_time)
+                    batch_counter = 0
+
             time.sleep(cfg["delay"])
 
         except Exception as e:
             log(f"⚠ MAJOR ERROR: {str(e)[:60]} (continuing loop...)")
             time.sleep(15)
+
+        # Heartbeat
+        if state["running"]:
+            log("❤️ HEARTBEAT - Bot still alive")
 
 @app.route("/")
 def index():
@@ -78,7 +105,7 @@ def start():
     state["running"] = False
     time.sleep(0.3)
 
-    state = {"running": True, "sent": 0, "logs": ["🚀 SPAM BOT STARTED"], "start_time": time.time()}
+    state = {"running": True, "sent": 0, "logs": ["🚀 ADVANCED SPAM BOT STARTED"], "start_time": time.time()}
 
     cfg["sessionid"] = request.form.get("sessionid", "").strip()
     raw = request.form.get("messages", "").strip()
@@ -88,7 +115,7 @@ def start():
     cfg["thread_id"] = request.form.get("thread_id", "").strip() or None
 
     threading.Thread(target=spam_bot, daemon=True).start()
-    log("SPAM BOT STARTED - Continuous Multi GC")
+    log("ADVANCED SPAM BOT STARTED - Continuous + Batch Break + Session Save")
     return jsonify({"ok": True})
 
 @app.route("/stop", methods=["POST"])
