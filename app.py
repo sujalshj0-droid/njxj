@@ -10,7 +10,11 @@ app = Flask(__name__)
 app.secret_key = "sujal_final"
 
 state = {"running": False, "sent": 0, "logs": [], "start_time": None}
-cfg = {"sessionid": "", "messages": [], "delay": 12, "group_delay": 3, "thread_id": None}
+cfg = {"sessionid": "", "messages": [], "delay": 15, "group_delay": 4, "thread_id": None}
+
+# Group cache for low load
+cached_groups = []
+last_cache_time = 0
 
 def log(msg):
     entry = f"[{time.strftime('%H:%M:%S')}] {msg}"
@@ -18,49 +22,44 @@ def log(msg):
     if len(state["logs"]) > 500:
         state["logs"] = state["logs"][-500:]
 
-def save_session(cl):
+def get_groups(cl):
+    global cached_groups, last_cache_time
+    if time.time() - last_cache_time < 90:   # 90 second cache
+        return cached_groups
     try:
-        cl.dump_settings("session.json")
-        log("💾 Session saved")
+        threads = cl.direct_threads(amount=30)   # Heavy load kam kiya
+        cached_groups = [t for t in threads if getattr(t, "is_group", False)]
+        last_cache_time = time.time()
+        log(f"🔄 Groups cached → {len(cached_groups)} groups")
+        return cached_groups
     except:
-        pass
+        return cached_groups
 
 def spam_bot():
     cl = Client()
     cl.delay_range = [6, 18]
 
-    # Auto load session
-    if os.path.exists("session.json"):
-        try:
-            cl.load_settings("session.json")
-            log("🔄 Loaded saved session.json")
-        except:
-            pass
-
     try:
         cl.login_by_sessionid(cfg["sessionid"])
         log("✅ LOGIN SUCCESS")
-        save_session(cl)
     except Exception as e:
         log(f"❌ LOGIN FAILED → {str(e)[:80]}")
         return
 
-    batch_counter = 0
+    batch = 0
     while state["running"]:
         try:
             if cfg["thread_id"]:
                 groups = [type('obj', (object,), {'id': int(cfg["thread_id"]), 'thread_title': 'Specific GC'})()]
-                log("🎯 Specific Thread ID mode")
             else:
-                threads = cl.direct_threads(amount=100)
-                groups = [t for t in threads if getattr(t, "is_group", False)]
+                groups = get_groups(cl)
 
             if not groups:
-                log("⚠ No groups found, retrying...")
-                time.sleep(20)
+                log("⚠ No groups, retrying...")
+                time.sleep(25)
                 continue
 
-            log(f"🔄 Found {len(groups)} groups - Rotation Start")
+            log(f"🔄 Using {len(groups)} groups")
 
             for thread in groups:
                 if not state["running"]:
@@ -73,27 +72,26 @@ def spam_bot():
                     cl.direct_send(msg, thread_ids=[gid])
                     state["sent"] += 1
                     log(f"📨 SENT to → {title}")
-                except Exception:
+                except:
                     log(f"⚠ SEND FAILED in {title} (continuing...)")
 
-                time.sleep(cfg["group_delay"] + random.uniform(0.8, 2.2))
+                time.sleep(cfg["group_delay"] + random.uniform(1, 2.5))
 
-                batch_counter += 1
-                if batch_counter >= 10:
-                    break_time = random.randint(12, 18)
-                    log(f"⏳ Smart break after 10 GCs → {break_time} seconds")
+                batch += 1
+                if batch >= 8:
+                    break_time = random.randint(18, 25)
+                    log(f"⏳ Smart break after 8 GCs → {break_time}s (Free tier safe)")
                     time.sleep(break_time)
-                    batch_counter = 0
+                    batch = 0
 
-            time.sleep(cfg["delay"])
+            time.sleep(cfg["delay"] + random.uniform(4, 8))   # Extra sleep for low load
 
         except Exception as e:
-            log(f"⚠ MAJOR ERROR: {str(e)[:60]} (continuing loop...)")
-            time.sleep(15)
+            log(f"⚠ ERROR: {str(e)[:60]} → Continuing...")
+            time.sleep(20)
 
-        # Heartbeat
         if state["running"]:
-            log("❤️ HEARTBEAT - Bot still alive")
+            log("❤️ HEARTBEAT - Bot alive & low load")
 
 @app.route("/")
 def index():
@@ -105,17 +103,17 @@ def start():
     state["running"] = False
     time.sleep(0.3)
 
-    state = {"running": True, "sent": 0, "logs": ["🚀 ADVANCED SPAM BOT STARTED"], "start_time": time.time()}
+    state = {"running": True, "sent": 0, "logs": ["🚀 LOW-LOAD SPAM BOT STARTED"], "start_time": time.time()}
 
     cfg["sessionid"] = request.form.get("sessionid", "").strip()
     raw = request.form.get("messages", "").strip()
     cfg["messages"] = [m.strip() for m in raw.replace("---", "\n\n").split("\n\n") if m.strip()] or ["Default spam message"]
-    cfg["delay"] = float(request.form.get("delay", "12"))
-    cfg["group_delay"] = int(request.form.get("group_delay", "3"))
+    cfg["delay"] = float(request.form.get("delay", "15"))
+    cfg["group_delay"] = int(request.form.get("group_delay", "4"))
     cfg["thread_id"] = request.form.get("thread_id", "").strip() or None
 
     threading.Thread(target=spam_bot, daemon=True).start()
-    log("ADVANCED SPAM BOT STARTED - Continuous + Batch Break + Session Save")
+    log("LOW-LOAD SPAM BOT STARTED - Render Free Tier Optimized")
     return jsonify({"ok": True})
 
 @app.route("/stop", methods=["POST"])
